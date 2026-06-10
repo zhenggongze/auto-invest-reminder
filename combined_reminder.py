@@ -398,23 +398,27 @@ def _build_nasdaq_section(result):
 # ============================================================
 
 def send_pushdeer(full_text, logger):
-    payload = {
-        "pushkey": PUSHDEER_KEY,
-        "text": full_text,
-        "type": "markdown",
-    }
     for attempt in range(MAX_RETRIES):
         try:
             logger.info(f"PushDeer 推送中...（第 {attempt + 1} 次尝试）")
-            resp = requests.post(PUSHDEER_URL, data=payload, timeout=REQUEST_TIMEOUT)
+            resp = requests.post(
+                PUSHDEER_URL,
+                data={
+                    "pushkey": PUSHDEER_KEY,
+                    "text": full_text,
+                },
+                timeout=REQUEST_TIMEOUT
+            )
+            logger.debug(f"PushDeer HTTP状态: {resp.status_code}")
+            logger.debug(f"PushDeer 原始响应: {resp.text[:500]}")
             result = resp.json()
-            success = (result.get("code") == 0 or
-                       result.get("content", {}).get("result") == "success")
-            if success:
+            code = result.get("code")
+            logger.info(f"PushDeer 返回 code={code}, content={json.dumps(result.get('content', {}), ensure_ascii=False)[:300]}")
+            if code == 0:
                 logger.info("PushDeer 推送成功")
                 return True, result
             else:
-                logger.warning(f"PushDeer 返回失败: {result}")
+                logger.warning(f"PushDeer 返回失败 code={code}: {result}")
         except requests.exceptions.Timeout:
             logger.warning(f"PushDeer 请求超时（{REQUEST_TIMEOUT}s）")
         except requests.exceptions.ConnectionError as e:
