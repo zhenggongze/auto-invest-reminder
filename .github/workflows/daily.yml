@@ -2,8 +2,10 @@ name: 每日定投偏离度
 
 on:
   schedule:
-    # 北京时间 20:00 = UTC 12:00，周一至周五
-    - cron: '0 12 * * 1-5'
+    # 北京时间 18:00 = UTC 10:00，提前2小时触发以对冲GitHub延迟
+    - cron: '0 10 * * 1-5'
+    # 备用：UTC 11:00（北京19:00），双保险
+    - cron: '0 11 * * 1-5'
   workflow_dispatch:
 
 jobs:
