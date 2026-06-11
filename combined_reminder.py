@@ -468,11 +468,11 @@ def main():
     logger.info(f"当前北京时间: {beijing_now.strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 50)
 
-    # 时间守卫：仅在北京时间 19:00~22:59 之间推送
-    # GitHub cron UTC 12:00(BJ 20:00) 正常到达或延迟1-2小时都覆盖
+    # 时间守卫：仅在北京时间 08:00~11:59 之间推送
+    # GitHub cron UTC 00:30(BJ 08:30) 正常到达或延迟1-2小时都覆盖
     bj_hour = beijing_now.hour
-    if bj_hour < 19 or bj_hour >= 23:
-        logger.warning(f"当前北京时间 {bj_hour}:00 不在推送窗口(19:00~22:59)，跳过推送")
+    if bj_hour < 8 or bj_hour >= 12:
+        logger.warning(f"当前北京时间 {bj_hour}:00 不在推送窗口(08:00~11:59)，跳过推送")
         # 仍写入状态文件记录
         write_status_file(date_str, False, False, False,
                          ["非推送时段，跳过"], "非推送时段，跳过", logger)
