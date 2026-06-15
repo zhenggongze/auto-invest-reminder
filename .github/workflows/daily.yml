@@ -8,6 +8,9 @@ on:
     - cron: '30 1 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   reminder:
     runs-on: ubuntu-latest
@@ -29,3 +32,11 @@ jobs:
 
       - name: 运行定投偏离度脚本
         run: python combined_reminder.py
+
+      - name: 提交日志保持仓库活跃
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add logs/ || true
+          git diff --staged --quiet || git commit -m "📊 每日推送 $(date +%Y-%m-%d)"
+          git push
