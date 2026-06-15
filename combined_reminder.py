@@ -298,15 +298,14 @@ def build_message(etf_result, nasdaq_result, logger):
     nasdaq_date = _safe_get(nasdaq_result, "analysis_date", "") if nasdaq_result else ""
     title_date = etf_date or nasdaq_date or datetime.now(BEIJING_TZ).strftime("%Y-%m-%d")
 
-    lines = []
-    lines.append(f"【Trae】定投偏离度 - {title_date}")
-    lines.append("")
+    title = f"【Trae】定投偏离度 - {title_date}"
 
+    lines = []
     lines.append(_build_etf_section(etf_result))
     lines.append("---")
     lines.append(_build_nasdaq_section(nasdaq_result))
 
-    return "\n".join(lines)
+    return title, "\n".join(lines)
 
 
 def _safe_get(d, key, default="N/A"):
@@ -397,7 +396,7 @@ def _build_nasdaq_section(result):
 # PushDeer 发送
 # ============================================================
 
-def send_pushdeer(full_text, logger):
+def send_pushdeer(title, body, logger):
     for attempt in range(MAX_RETRIES):
         try:
             logger.info(f"PushDeer 推送中...（第 {attempt + 1} 次尝试）")
@@ -405,7 +404,9 @@ def send_pushdeer(full_text, logger):
                 PUSHDEER_URL,
                 data={
                     "pushkey": PUSHDEER_KEY,
-                    "text": full_text,
+                    "text": title,
+                    "type": "markdown",
+                    "desp": body,
                 },
                 timeout=REQUEST_TIMEOUT
             )
@@ -529,15 +530,15 @@ def main():
             errors.append(f"{NASDAQ_NAME}: {err}")
 
         # --- 构建消息 ---
-        message = build_message(etf_result, nasdaq_result, logger)
+        title, body = build_message(etf_result, nasdaq_result, logger)
         logger.info("推送消息已构建")
-        logger.debug(f"消息内容:\n{message}")
+        logger.debug(f"消息内容:\n{title}\n\n{body}")
 
         # --- 写入日志备用渠道 ---
         _write_log_backup(etf_result, nasdaq_result, logger)
 
         # --- PushDeer 推送 ---
-        push_success, push_resp = send_pushdeer(message, logger)
+        push_success, push_resp = send_pushdeer(title, body, logger)
 
         if not push_success:
             errors.append(f"PushDeer推送失败: {push_resp}")
