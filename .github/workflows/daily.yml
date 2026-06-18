@@ -1,6 +1,11 @@
 name: 每日定投偏离度
 
 on:
+  schedule:
+    # GitHub cron 不准——只要触发就算赢。不管几点推都比不推好
+    - cron: '0 0 * * *'
+    - cron: '0 8 * * *'
+    - cron: '0 16 * * *'
   workflow_dispatch:
 
 permissions:
