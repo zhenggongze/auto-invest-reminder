@@ -2,10 +2,8 @@ name: 每日定投偏离度
 
 on:
   schedule:
-    # 北京时间 08:30 → UTC 00:30
-    - cron: '30 0 * * *'
-    # 备用 UTC 08:00(北京16:00) 兜底
-    - cron: '0 8 * * *'
+    # UTC 00:00 ~北京08:00，GitHub cron随机偏移2-8小时，全天只推一次（脚本自带去重）
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
 permissions:
