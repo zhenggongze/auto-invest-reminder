@@ -464,6 +464,18 @@ def main():
     beijing_now = datetime.now(BEIJING_TZ)
     date_str = beijing_now.strftime("%Y%m%d")
 
+    # 去重：今天已推送成功则直接退出，不重复推送
+    status_file = os.path.join(LOGS_DIR, f"combined_{date_str}_status.json")
+    if os.path.exists(status_file):
+        try:
+            with open(status_file, "r", encoding="utf-8") as f:
+                last_status = json.load(f)
+            if last_status.get("是否成功"):
+                logger.info(f"今日({date_str})已推送成功，跳过重复推送")
+                return
+        except:
+            pass
+
     logger.info("=" * 50)
     logger.info(f"合并定投提醒脚本启动 - {date_str}")
     logger.info(f"当前北京时间: {beijing_now.strftime('%Y-%m-%d %H:%M:%S')}")
