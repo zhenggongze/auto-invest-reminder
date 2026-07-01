@@ -25,7 +25,7 @@ from datetime import datetime, timezone, timedelta
 # 配置常量
 # ============================================================
 
-PUSHDEER_KEY = "PDU41552TCTtotgq3EC5AvTOaXpiZG0eMTR6VAl8v"
+PUSHDEER_KEY = os.environ.get("PUSHDEER_KEY", "")
 PUSHDEER_URL = "https://api2.pushdeer.com/message/push"
 
 ETF_CODE = "sh515450"

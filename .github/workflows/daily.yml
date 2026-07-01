@@ -1,9 +1,9 @@
 name: 每日定投偏离度
 
 on:
-  # 禁用schedule：GitHub cron随机延迟严重（实测UTC 09:33~17:05才触发=北京17:33~次日01:05）
-  # 改由本地Windows Task "CombinedReminderPush" 每天8:30准时推送
-  # workflow_dispatch 保留作为手动备份触发
+  # ⚠️ cron-job.org 是唯一调度源（每天 08:07 POST 到 workflow_dispatch API）
+  # GitHub Actions schedule cron 因经常延迟数小时至十小时以上而废弃
+  # 本地 Windows Task 已废弃（依赖本地电脑开机，不稳定）
   workflow_dispatch:
 
 permissions:
@@ -30,6 +30,8 @@ jobs:
 
       - name: 运行定投偏离度脚本
         run: python combined_reminder.py
+        env:
+          PUSHDEER_KEY: ${{ secrets.PUSHDEER_KEY }}
 
       - name: 提交日志保持仓库活跃
         run: |
