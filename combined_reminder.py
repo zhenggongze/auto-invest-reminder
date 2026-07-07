@@ -241,7 +241,7 @@ def _fetch_nasdaq_pe_pb_from_danjuan(logger):
 
 def _get_danjuan_history(data_type, dj_code, logger):
     field_map = {"pe": "index_eva_pe_growths", "pb": "index_eva_pb_growths"}
-    url = f"https://danjuanfunds.com/djapi/index_eva/{data_type}_history/{dj_code}?day=10y"
+    url = f"https://danjuanfunds.com/djapi/index_eva/{data_type}_history/{dj_code}?day=all"
     try:
         logger.debug(f"请求蛋卷API: {url}")
         resp = requests.get(
