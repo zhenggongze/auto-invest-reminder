@@ -1,0 +1,34 @@
+name: 调试 PE/PB
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests
+      - name: 测试蛋卷API
+        run: python _debug_pepb.py
+      - name: 测试NDX替代code
+        run: |
+          python -c "
+          import json, requests
+          headers = {'User-Agent': 'Mozilla/5.0'}
+          # 尝试不同code
+          for code in ['NDX', '.NDX', 'IXIC', '.IXIC', 'nasdaq', 'NASDAQ']:
+              try:
+                  r = requests.get(f'https://danjuanfunds.com/djapi/index_eva/pe_history/{code}?day=all', timeout=10, headers=headers)
+                  d = r.json()
+                  items = d.get('data', {}).get('index_eva_pe_growths', [])
+                  print(f'{code}: PE items={len(items)}, status={r.status_code}')
+                  if items:
+                      print(f'  last: {json.dumps(items[-1], ensure_ascii=False)[:200]}')
+              except Exception as e:
+                  print(f'{code}: ERROR {e}')
+          "
