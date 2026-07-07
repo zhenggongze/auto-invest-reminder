@@ -206,8 +206,7 @@ def get_nasdaq_valuation(logger):
                 "pb_pct": result.get("pb_pct"),
                 "rating": result.get("rating"),
             }
-        logger.warning("nasdaq_valuation_fetcher 返回空数据")
-        return None
+        logger.warning("nasdaq_valuation_fetcher 返回空数据，尝试蛋卷基金API...")
     except ImportError:
         logger.info("nasdaq_valuation_fetcher 模块不可用，尝试蛋卷基金API...")
     except Exception as e:
