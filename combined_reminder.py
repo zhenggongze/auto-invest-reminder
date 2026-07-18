@@ -337,7 +337,7 @@ def _build_etf_section(result):
     lines.append(f"- 状态：{status}")
     lines.append(f"- 建议：{advice}")
     lines.append("")
-    lines.append("> 偏离度≤6%可以100%胜率allin持有60天胜率收益6%，出现日期2022年10-11月、2023年12月-2024年1月、2024年9月，以及最近的 2026年6月底-7月初")
+    lines.append("> 偏离度≤-6%持有60天胜率100%收益6%，出现日期2022年10-11月、2023年12月-2024年1月、2024年9月，以及最近的 2026年6月底-7月初")
 
     return "\n".join(lines)
 
