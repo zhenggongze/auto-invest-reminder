@@ -337,7 +337,7 @@ def _build_etf_section(result):
     lines.append(f"- 状态：{status}")
     lines.append(f"- 建议：{advice}")
     lines.append("")
-    lines.append("> 偏离度≤6%持有60天胜率100%收益6%")
+    lines.append("> 偏离度≤6%可以100%胜率allin持有60天胜率收益6%，出现日期2022年10-11月、2023年12月-2024年1月、2024年9月，以及最近的 2026年6月底-7月初")
 
     return "\n".join(lines)
 
@@ -389,8 +389,15 @@ def _build_nasdaq_section(result):
     lines.append(f"- 状态：{status}")
     lines.append(f"- 建议：{advice}")
     lines.append("")
-    lines.append("> 纳斯达克100每年都会有15%~20%的回撤，只有超过这个幅度的回撤才考虑加仓")
-    lines.append("> 偏离度低于 -5% 重仓抄底（历史胜率100%）")
+    lines.append("> 回撤：每年都会有15%~20%的回撤，重点关注")
+    lines.append("> Allin：偏离度<-10% allin，持有2年最少赚+27.6%，持有4年最少+117%")
+    lines.append("> 定投：")
+    lines.append("> +15% → 100元/天")
+    lines.append("> +5% ~ +15% → 150元/天")
+    lines.append("> 0% ~ +5% → 300元/天")
+    lines.append("> -5% ~ 0% → 1500元/天")
+    lines.append("> -10% ~ -5% → 3000元/天")
+    lines.append("> < -10% → 4000元/天 + 梭哈")
 
     return "\n".join(lines)
 
