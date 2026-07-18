@@ -391,6 +391,7 @@ def _build_nasdaq_section(result):
     lines.append("")
     lines.append("> 回撤：每年都会有15%~20%的回撤，重点关注")
     lines.append("> Allin：偏离度<-10% allin，持有2年最少赚+27.6%，持有4年最少+117%")
+    lines.append(">")
     lines.append("> 定投：")
     lines.append("> +15% → 100元/天")
     lines.append("> +5% ~ +15% → 150元/天")
