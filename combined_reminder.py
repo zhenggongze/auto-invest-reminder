@@ -390,6 +390,7 @@ def _build_nasdaq_section(result):
     lines.append(f"- 建议：{advice}")
     lines.append("")
     lines.append("> 纳斯达克100每年都会有15%~20%的回撤，只有超过这个幅度的回撤才考虑加仓")
+    lines.append("> 偏离度低于 -5% 重仓抄底（历史胜率100%）")
 
     return "\n".join(lines)
 
