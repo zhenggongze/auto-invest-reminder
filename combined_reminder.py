@@ -336,6 +336,8 @@ def _build_etf_section(result):
     lines.append(f"- 偏离度：{dev:+.1f}%" if isinstance(dev, (int, float)) else f"- 偏离度：{dev}")
     lines.append(f"- 状态：{status}")
     lines.append(f"- 建议：{advice}")
+    lines.append("")
+    lines.append("> 偏离度≤6%持有60天胜率100%收益6%")
 
     return "\n".join(lines)
 
