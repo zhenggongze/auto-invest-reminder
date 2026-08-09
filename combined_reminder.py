@@ -466,6 +466,24 @@ def write_status_file(date_str, etf_success, nasdaq_success, push_success,
     logger.info(f"状态文件已保存: {status_file}")
 
 
+def has_successful_push_today(date_str, logger):
+    """检查当天是否已成功推送过（幂等保护：防止多个调度源同一天重复推送）。
+
+    依据：状态文件 combined_{date_str}_status.json 中"是否成功"为 True。
+    状态文件随 GitHub Actions 的"提交日志"步骤入库，下一次运行时能读到。
+    """
+    status_file = os.path.join(LOGS_DIR, f"combined_{date_str}_status.json")
+    if not os.path.exists(status_file):
+        return False
+    try:
+        with open(status_file, "r", encoding="utf-8") as f:
+            status = json.load(f)
+        return bool(status.get("是否成功", False))
+    except Exception as e:
+        logger.warning(f"读取状态文件失败（按未推送处理）: {e}")
+        return False
+
+
 # ============================================================
 # 主流程
 # ============================================================
@@ -485,6 +503,7 @@ def main():
     etf_success = False
     nasdaq_success = False
     push_success = False
+    skip_reason = None
 
     try:
         # --- 获取 515450 ETF 数据 ---
@@ -537,16 +556,39 @@ def main():
         # --- 写入日志备用渠道 ---
         _write_log_backup(etf_result, nasdaq_result, logger)
 
-        # --- PushDeer 推送 ---
-        push_success, push_resp = send_pushdeer(message, logger)
+        # --- 幂等保护：数据未更新（非当天数据）则不推送 ---
+        data_date = (_safe_get(etf_result, "analysis_date", "") if etf_result else "") or \
+                    (_safe_get(nasdaq_result, "analysis_date", "") if nasdaq_result else "")
+        today_str = beijing_now.strftime("%Y-%m-%d")
+        if data_date and data_date != today_str:
+            skip_reason = f"数据日期 {data_date} 非当天 {today_str}，跳过推送（避免推送过期数据）"
+            logger.warning(skip_reason)
+        elif has_successful_push_today(date_str, logger):
+            skip_reason = f"今日({date_str})已成功推送过，跳过重复推送（幂等保护）"
+            logger.warning(skip_reason)
+        else:
+            # --- PushDeer 推送 ---
+            push_success, push_resp = send_pushdeer(message, logger)
 
-        if not push_success:
-            errors.append(f"PushDeer推送失败: {push_resp}")
-            logger.warning("PushDeer 推送失败，已通过日志备用渠道保存完整分析结果")
+            if not push_success:
+                errors.append(f"PushDeer推送失败: {push_resp}")
+                logger.warning("PushDeer 推送失败，已通过日志备用渠道保存完整分析结果")
 
     except Exception as e:
         logger.error(f"主流程异常: {e}", exc_info=True)
         errors.append(f"主流程异常: {e}")
+
+    if skip_reason:
+        # 跳过推送（数据未更新 或 当日已推送过）：记录状态文件，优雅退出不算失败
+        try:
+            write_status_file(date_str, etf_success, nasdaq_success,
+                              push_success, errors, f"跳过推送: {skip_reason}", logger)
+        except Exception as e:
+            logger.error(f"状态文件写入失败: {e}")
+        logger.info("=" * 50)
+        logger.info(f"脚本执行完成 - 跳过推送（原因: {skip_reason}）")
+        logger.info("=" * 50)
+        return 0
 
     # --- 写入状态文件 ---
     summary_parts = []
