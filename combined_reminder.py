@@ -556,14 +556,10 @@ def main():
         # --- 写入日志备用渠道 ---
         _write_log_backup(etf_result, nasdaq_result, logger)
 
-        # --- 幂等保护：数据未更新（非当天数据）则不推送 ---
-        data_date = (_safe_get(etf_result, "analysis_date", "") if etf_result else "") or \
-                    (_safe_get(nasdaq_result, "analysis_date", "") if nasdaq_result else "")
-        today_str = beijing_now.strftime("%Y-%m-%d")
-        if data_date and data_date != today_str:
-            skip_reason = f"数据日期 {data_date} 非当天 {today_str}，跳过推送（避免推送过期数据）"
-            logger.warning(skip_reason)
-        elif has_successful_push_today(date_str, logger):
+        # --- 幂等保护：当日已成功推送过则跳过（防止多个调度源重复推送） ---
+        # 说明：数据源(fund_etf_hist_sina)返回最近收盘日数据，盘中无当日K线，
+        #       因此不校验"数据日期==当天"，只保证每天最多推送一次。
+        if has_successful_push_today(date_str, logger):
             skip_reason = f"今日({date_str})已成功推送过，跳过重复推送（幂等保护）"
             logger.warning(skip_reason)
         else:
