@@ -1,7 +1,8 @@
 name: 每日定投偏离度
 
 on:
-  # ⚠️ cron-job.org 是唯一调度源（每天 08:07 POST 到 workflow_dispatch API）
+  # ⚠️ cron-job.org 是调度源：每天 14:40（北京时间）POST 到 workflow_dispatch API
+  # 注意：cron-job.org 上若残留上午 ~10:30 的旧任务需删除；脚本内已有 14:00 时间窗兜底拦截
   # GitHub Actions schedule cron 因经常延迟数小时至十小时以上而废弃
   # 本地 Windows Task 已废弃（依赖本地电脑开机，不稳定）
   workflow_dispatch:
