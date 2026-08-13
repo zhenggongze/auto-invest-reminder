@@ -19,22 +19,41 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
+      # 推送时间窗检查（北京时间）：仅 14:00 之后才执行脚本与推送。
+      # 拦截 cron-job.org 上午 ~10:30 的旧调度任务：旧任务触发时，
+      # 本步骤输出 ok=false，后续"运行脚本/提交日志"步骤全部跳过，workflow 空转。
+      - name: 推送时间窗检查（北京时间 14:00 前不执行）
+        id: window
+        run: |
+          H=$(TZ=Asia/Shanghai date +%H)
+          if [ "$H" -ge 14 ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "当前北京时间 $(TZ=Asia/Shanghai date +%H:%M)，在推送时间窗内"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "当前北京时间 $(TZ=Asia/Shanghai date +%H:%M)，早于 14:00，跳过本次执行（拦截上午旧任务）"
+          fi
+
       - name: 设置 Python
+        if: steps.window.outputs.ok == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: 安装依赖
+        if: steps.window.outputs.ok == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: 运行定投偏离度脚本
+        if: steps.window.outputs.ok == 'true'
         run: python combined_reminder.py
         env:
           PUSHDEER_KEY: ${{ secrets.PUSHDEER_KEY }}
 
       - name: 提交日志保持仓库活跃
+        if: steps.window.outputs.ok == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
