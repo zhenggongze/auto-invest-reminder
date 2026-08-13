@@ -47,6 +47,12 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGS_DIR = os.path.join(BASE_DIR, "logs")
 BEIJING_TZ = timezone(timedelta(hours=8))
 
+# 推送时间窗（北京时间）：仅 14:00 之后允许推送。
+# 背景：cron-job.org 曾存在两个调度任务（上午 ~10:30 旧任务 + 14:40 新任务）。
+#       旧任务若未彻底删除，会在上午抢先推送。此处用时间窗兜底，
+#       确保只有下午 14:40 的正确调度才会真正发出通知，拦截上午的旧任务。
+PUSH_WINDOW_START_HOUR = 14
+
 
 # ============================================================
 # 日志配置
@@ -484,6 +490,21 @@ def has_successful_push_today(date_str, logger):
         return False
 
 
+def is_in_push_window(beijing_now, logger):
+    """推送时间窗校验：仅北京时间 14:00 之后允许推送。
+
+    拦截 cron-job.org 上午 ~10:30 的旧调度任务，确保只有下午 14:40
+    的正确调度才会真正发出通知。
+    """
+    if beijing_now.hour >= PUSH_WINDOW_START_HOUR:
+        return True
+    logger.warning(
+        f"当前北京时间 {beijing_now.strftime('%H:%M')} 早于 "
+        f"{PUSH_WINDOW_START_HOUR:02d}:00，属于非推送时段（拦截上午旧任务），跳过推送"
+    )
+    return False
+
+
 # ============================================================
 # 主流程
 # ============================================================
@@ -496,6 +517,13 @@ def main():
     logger.info("=" * 50)
     logger.info(f"合并定投提醒脚本启动 - {date_str}")
     logger.info("=" * 50)
+
+    # --- 推送时间窗校验：仅 14:00 后（北京时间）推送，拦截上午旧任务 ---
+    if not is_in_push_window(beijing_now, logger):
+        logger.info("=" * 50)
+        logger.info(f"脚本执行完成 - 非推送时段（北京时间 {beijing_now.strftime('%H:%M')} 早于 14:00），跳过推送")
+        logger.info("=" * 50)
+        return 0
 
     errors = []
     etf_result = None
