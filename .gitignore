@@ -5,6 +5,7 @@ _*.py
 _*.csv
 _*.txt
 _*.xlsx
+_*.json
 _*.html
 *.xlsx
 中证红利偏离度回测报告.html
