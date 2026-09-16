@@ -46,11 +46,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 运行定投偏离度脚本
+      - name: 运行中证红利偏离度脚本
         if: steps.window.outputs.ok == 'true'
         run: python combined_reminder.py
         env:
           PUSHDEER_KEY: ${{ secrets.PUSHDEER_KEY }}
+          # 用于读写持仓状态 Repository Variable（ZZ_POSITION）。
+          # 仓库是 public，token 只放 Secrets，绝不写入任何被提交的文件。
+          GH_PAT: ${{ secrets.GH_PAT }}
 
       - name: 提交日志保持仓库活跃
         if: steps.window.outputs.ok == 'true'
