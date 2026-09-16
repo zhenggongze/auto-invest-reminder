@@ -540,16 +540,16 @@ def _calc_rating(pe_pct):
 # PushDeer 消息构造
 # ============================================================
 
-def build_message(zz_result, nasdaq_result, pos, signal, review_text, etf_quote, logger):
+def build_message(zz_result, nasdaq_result, pos, signal, review_text, logger):
     zz_date = _safe_get(zz_result, "analysis_date", "") if zz_result else ""
     nasdaq_date = _safe_get(nasdaq_result, "analysis_date", "") if nasdaq_result else ""
     title_date = zz_date or nasdaq_date or datetime.now(BEIJING_TZ).strftime("%Y-%m-%d")
 
     lines = []
-    lines.append(f"【Trae】中证红利偏离度 - {title_date}")
+    lines.append(f"定投偏离度 - {title_date}")
     lines.append("")
 
-    lines.append(_build_zz_section(zz_result, pos, signal, review_text, etf_quote))
+    lines.append(_build_zz_section(zz_result, pos, signal, review_text))
     lines.append("---")
     lines.append(_build_nasdaq_section(nasdaq_result))
 
@@ -562,14 +562,7 @@ def _safe_get(d, key, default="N/A"):
     return d.get(key, default)
 
 
-def _fmt_tx_ts(ts):
-    """20260916161448 → 16:14"""
-    if not ts or len(ts) < 12:
-        return "时间未知"
-    return f"{ts[8:10]}:{ts[10:12]}"
-
-
-def _build_zz_section(result, pos, signal, review_text, etf_quote):
+def _build_zz_section(result, pos, signal, review_text):
     lines = []
     lines.append(f"### {ZZ_INDEX_NAME}")
     lines.append("")
@@ -595,7 +588,7 @@ def _build_zz_section(result, pos, signal, review_text, etf_quote):
     dev = result["deviation"]
     holding = pos["状态"] == "持仓"
 
-    lines.append(f"- 指数现价：{price}{ZZ_PRICE_UNIT}（腾讯 {_fmt_tx_ts(result.get('quote_ts'))}）")
+    lines.append(f"- 指数现价：{price}{ZZ_PRICE_UNIT}")
     lines.append(f"- 250日均线：{result['ma_value']}{ZZ_PRICE_UNIT}")
     lines.append(f"- 偏离度：{dev:+.2f}%")
 
@@ -624,11 +617,6 @@ def _build_zz_section(result, pos, signal, review_text, etf_quote):
     else:
         lines.append(f"**状态：空仓等信号**（离买点还需再跌 "
                      f"{abs(ZZ_BUY_THRESHOLD - dev):.2f} 个百分点）")
-
-    if etf_quote:
-        lines.append("")
-        lines.append(f"- {ZZ_ETF_NAME} 现价：{etf_quote['price']:.3f}{ZZ_ETF_PRICE_UNIT}"
-                     f"（下单参考，腾讯 {_fmt_tx_ts(etf_quote.get('ts'))}）")
 
     lines.append("")
     lines.append("> 近10年回测（000922，买-7%/卖0%）：10笔 / 胜率90% / 每笔平均+8.02% / "
@@ -868,7 +856,6 @@ def main():
     nasdaq_result = None
     signal = None
     review_text = None
-    etf_quote = None
     zz_success = False
     nasdaq_success = False
     push_success = False
@@ -879,7 +866,7 @@ def main():
         logger.info("--- 中证红利策略（000922 信号 / 515080 实盘）---")
         pos = read_position(logger)
         try:
-            zz_success, _, zz_result, signal, review_text, etf_quote = \
+            zz_success, _, zz_result, signal, review_text, _ = \
                 run_zz_strategy(pos, beijing_now, logger, errors)
             if signal:
                 logger.info(f"今日信号: {signal}")
@@ -915,7 +902,7 @@ def main():
             errors.append(f"{NASDAQ_NAME}: {err}")
 
         # --- 构建消息 ---
-        message = build_message(zz_result, nasdaq_result, pos, signal, review_text, etf_quote, logger)
+        message = build_message(zz_result, nasdaq_result, pos, signal, review_text, logger)
         logger.info("推送消息已构建")
         logger.debug(f"消息内容:\n{message}")
 
