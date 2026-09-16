@@ -590,7 +590,7 @@ def _build_zz_section(result, pos, signal, review_text):
 
     lines.append(f"- 指数现价：{price}{ZZ_PRICE_UNIT}")
     lines.append(f"- 250日均线：{result['ma_value']}{ZZ_PRICE_UNIT}")
-    lines.append(f"- 偏离度：{dev:+.2f}%")
+    lines.append(f"- **偏离度：{dev:+.2f}%**")
 
     if holding and pos.get("买入价"):
         cost = pos["买入价"]
