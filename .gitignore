@@ -1,0 +1,12 @@
+# 本仓库是 public，以下文件绝不入库（本地回测/临时探测脚本、大文件产物）
+__pycache__/
+*.pyc
+_*.py
+_*.csv
+_*.txt
+_*.xlsx
+_*.html
+*.xlsx
+中证红利偏离度回测报告.html
+.env
+.env.*
