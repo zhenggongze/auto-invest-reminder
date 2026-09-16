@@ -6,12 +6,12 @@ on:
 jobs:
   debug:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install requests numpy
-      - name: 调试百分位
-        run: python _debug_pepct.py
+      - run: pip install requests numpy akshare
+      - name: 探测中证红利数据源
+        run: python _probe_zz.py
