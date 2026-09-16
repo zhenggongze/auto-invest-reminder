@@ -13,5 +13,5 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install requests numpy akshare
-      - name: 探测中证红利数据源
-        run: python _probe_zz.py
+      - name: 探测中证红利腾讯源
+        run: python _probe_tx.py
