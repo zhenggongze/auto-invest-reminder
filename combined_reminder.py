@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-合并定投提醒脚本（515450红利低波50ETF + 纳斯达克100指数 + PE/PB估值）
+中证红利偏离度策略提醒脚本
+  信号源：000922 中证红利指数（腾讯源日线 + 腾讯实时价）
+  实盘标的：515080 中证红利ETF
+  策略：偏离度首次 ≤ -7% 满仓买入 → 持有到偏离度首次 ≥ 0% 全部卖出（不看持有时长）
+  附：纳斯达克100指数 + PE/PB 估值
 推送渠道：PushDeer（markdown格式）
 
 每轮对话强制流程：
@@ -28,10 +32,38 @@ from datetime import datetime, timezone, timedelta
 PUSHDEER_KEY = os.environ.get("PUSHDEER_KEY", "")
 PUSHDEER_URL = "https://api2.pushdeer.com/message/push"
 
-ETF_CODE = "sh515450"
-ETF_NAME = "515450红利低波50ETF"
-ETF_MA_DAYS = 250
-ETF_PRICE_UNIT = "元"
+# --- 中证红利策略（信号源 = 000922 指数，实盘标的 = 515080 ETF）---
+ZZ_INDEX_CODE = "sh000922"          # 000922 中证红利指数（信号源）
+ZZ_INDEX_NAME = "中证红利指数(000922)"
+ZZ_ETF_CODE = "sh515080"            # 515080 中证红利ETF（实盘下单标的）
+ZZ_ETF_NAME = "515080中证红利ETF"
+ZZ_MA_DAYS = 250                    # 250 日均线
+ZZ_BUY_THRESHOLD = -7.0             # 买入阈值：偏离度首次 ≤ -7%
+ZZ_SELL_THRESHOLD = 0.0             # 卖出阈值：偏离度首次 ≥ 0%
+ZZ_PRICE_UNIT = "点"
+ZZ_ETF_PRICE_UNIT = "元"
+# 腾讯行情（云端实测：000922 实时唯一可用源，日线用腾讯 stock_zh_index_daily_tx）
+TX_QUOTE_BASE = "http://qt.gtimg.cn/q="
+TX_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+              "Referer": "https://gu.qq.com/"}
+
+# --- 持仓状态存放：GitHub Repository Variable（仓库公开，状态不入库）---
+GH_REPO = os.environ.get("GITHUB_REPOSITORY", "zhenggongze/auto-invest-reminder")
+GH_VAR_NAME = "ZZ_POSITION"
+GH_PAT = os.environ.get("GH_PAT", "")   # 由 workflow 通过 Secrets 注入
+
+# 空状态模板
+EMPTY_POSITION = {
+    "状态": "空仓",          # 空仓 / 持仓
+    "待确认": False,         # 是否有待次日复核的信号
+    "信号类型": None,        # 买入 / 卖出
+    "信号日": None,          # 信号触发日 YYYY-MM-DD
+    "信号日盘中偏离度": None,
+    "买入日": None,          # 已确认的买入日
+    "买入价": None,          # 已确认的买入价（指数点位）
+    "买入偏离度": None,
+    "更新于": None,
+}
 
 NASDAQ_CODE = ".NDX"
 NASDAQ_NAME = "纳斯达克100指数"
@@ -42,6 +74,9 @@ NASDAQ_YEAR_DAYS = 252
 MAX_RETRIES = 3
 RETRY_DELAYS = [1, 2, 4]
 REQUEST_TIMEOUT = 10
+
+# DRY_RUN=1 时：不推送、不写变量，只打印（本地测试用）
+DRY_RUN = os.environ.get("DRY_RUN", "") == "1"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGS_DIR = os.path.join(BASE_DIR, "logs")
@@ -104,10 +139,43 @@ def fetch_with_retry(fetch_func, code, name, logger):
 # 数据获取
 # ============================================================
 
-def fetch_etf_data(code):
+def fetch_zz_daily(code):
+    """000922 日线（腾讯源）。云端实测：东财断连、新浪停在 2019，只有腾讯可用。"""
     import akshare as ak
-    df = ak.fund_etf_hist_sina(symbol=code)
-    return df
+    df = ak.stock_zh_index_daily_tx(symbol=code)
+    df["date"] = pd.to_datetime(df["date"])
+    return df.sort_values("date").reset_index(drop=True)
+
+
+def fetch_tx_quote(code, logger=None):
+    """腾讯实时行情（000922 指数 / 515080 ETF 同一个接口）。
+
+    云端实测结论（2026-09-16 GitHub Actions）：
+      ✅ qt.gtimg.cn          可用（0.78s）
+      ❌ stock_zh_index_spot_em 东财断连
+      ❌ stock_zh_index_spot_sina 不含 000922
+      ❌ hq.sinajs.cn         返回全 0
+      ⚠️ fund_etf_spot_em     可用但耗时 36s，弃用
+    返回字段取自 `~` 分隔的固定位置。
+    """
+    resp = requests.get(TX_QUOTE_BASE + code, timeout=REQUEST_TIMEOUT, headers=TX_HEADERS)
+    resp.encoding = "gbk"
+    txt = resp.text.strip()
+    if "=" not in txt:
+        raise ValueError(f"腾讯行情格式异常: {txt[:80]}")
+    fields = txt.split("=", 1)[1].strip().strip('";').split("~")
+    if len(fields) < 35:
+        raise ValueError(f"腾讯行情字段不足({len(fields)})，代码可能无效: {code}")
+    quote = {
+        "name": fields[1],
+        "price": float(fields[3]),
+        "prev_close": float(fields[4]) if fields[4] else 0.0,
+        "ts": fields[30],              # 形如 20260916161448
+        "day": fields[30][:8],         # YYYYMMDD
+    }
+    if logger:
+        logger.debug(f"腾讯行情 {code}: {quote}")
+    return quote
 
 
 def fetch_nasdaq_data(code):
@@ -163,6 +231,180 @@ def calc_metrics(df, ma_days, price_unit, is_index, logger):
         f"偏离度={deviation:+.2f}%"
     )
     return result
+
+
+def calc_zz_metrics(df_daily, quote, logger):
+    """中证红利偏离度：用「历史收盘序列（剔除当日）+ 当日实时价」计算。
+
+    日线源盘中一般不含当日 K 线、收盘后才含。这里统一把「日期 == 当日」那根丢掉
+    再追加实时价，两种情况都收敛到同一口径：
+        MA250 = 最近 249 个交易日收盘价 + 当日实时价 的算术平均
+    """
+    if df_daily is None or df_daily.empty:
+        raise ValueError("中证红利日线数据为空")
+
+    today = pd.to_datetime(quote["day"], format="%Y%m%d")
+    hist = df_daily[df_daily["date"] < today]
+    closes = hist["close"].astype(float).tolist()
+    need = ZZ_MA_DAYS - 1
+    if len(closes) < need:
+        raise ValueError(f"历史数据不足：仅 {len(closes)} 根，需要 {need} 根")
+
+    window = closes[-need:] + [quote["price"]]
+    ma_value = float(np.mean(window))
+    deviation = (quote["price"] - ma_value) / ma_value * 100
+
+    result = {
+        "analysis_date": str(today.date()),
+        "current_price": round(quote["price"], 2),
+        "ma_days": ZZ_MA_DAYS,
+        "ma_value": round(ma_value, 2),
+        "deviation": round(deviation, 2),
+        "price_unit": ZZ_PRICE_UNIT,
+        "quote_ts": quote["ts"],
+        "daily_last_date": str(df_daily["date"].iloc[-1].date()),
+        "daily_last_close": round(float(df_daily["close"].iloc[-1]), 2),
+    }
+    logger.info(
+        f"中证红利指标: 实时价={quote['price']:.2f} 偏离度={deviation:+.2f}% "
+        f"| MA250={ma_value:.2f} | 腾讯时间={quote['ts']} | 日线最后一根={result['daily_last_date']}"
+    )
+    return result
+
+
+def zz_close_deviation_on_date(df_daily, target_date):
+    """算某个历史交易日的「真实收盘偏离度」（用于次日复核信号真伪）。
+
+    返回 (收盘价, 偏离度)，数据缺失时返回 (None, None)。
+    """
+    d = pd.to_datetime(target_date)
+    idx = df_daily.index[df_daily["date"] == d]
+    if len(idx) == 0:
+        return None, None
+    i = int(idx[0])
+    if i + 1 < ZZ_MA_DAYS:
+        return None, None
+    close = float(df_daily["close"].values[i])
+    ma = float(np.mean(df_daily["close"].astype(float).values[i + 1 - ZZ_MA_DAYS:i + 1]))
+    return close, (close - ma) / ma * 100
+
+
+# ============================================================
+# 持仓状态（GitHub Repository Variable，仓库公开故不入库）
+# ============================================================
+
+def _gh_headers():
+    return {"Accept": "application/vnd.github+json",
+            "Authorization": "Bearer " + GH_PAT,
+            "User-Agent": "combined-reminder"}
+
+
+def read_position(logger):
+    """读取持仓状态；不存在或失败时返回空状态模板。"""
+    fallback = dict(EMPTY_POSITION)
+    if not GH_PAT:
+        logger.warning("未配置 GH_PAT，无法读持仓状态（按空仓处理）")
+        return fallback
+    url = f"https://api.github.com/repos/{GH_REPO}/actions/variables/{GH_VAR_NAME}"
+    try:
+        resp = requests.get(url, headers=_gh_headers(), timeout=REQUEST_TIMEOUT)
+        if resp.status_code == 404:
+            logger.info(f"持仓变量 {GH_VAR_NAME} 不存在，按空仓初始化")
+            return fallback
+        resp.raise_for_status()
+        pos = json.loads(resp.json()["value"])
+        merged = dict(EMPTY_POSITION)
+        merged.update(pos)
+        logger.info(f"持仓状态: {merged['状态']} | 待确认={merged['待确认']} | 买入日={merged['买入日']}")
+        return merged
+    except Exception as e:
+        logger.error(f"读取持仓状态失败（按空仓处理）: {e}")
+        return fallback
+
+
+def write_position(pos, logger):
+    if DRY_RUN:
+        logger.info(f"[DRY_RUN] 跳过写持仓变量，将写入: {json.dumps(pos, ensure_ascii=False)}")
+        return True
+    if not GH_PAT:
+        logger.error("未配置 GH_PAT，无法写持仓状态")
+        return False
+    pos = dict(pos)
+    pos["更新于"] = datetime.now(BEIJING_TZ).isoformat(timespec="seconds")
+    url = f"https://api.github.com/repos/{GH_REPO}/actions/variables"
+    name_url = f"{url}/{GH_VAR_NAME}"
+    body = {"name": GH_VAR_NAME, "value": json.dumps(pos, ensure_ascii=False)}
+    try:
+        resp = requests.get(name_url, headers=_gh_headers(), timeout=REQUEST_TIMEOUT)
+        if resp.status_code == 200:
+            r2 = requests.patch(name_url, headers=_gh_headers(), json=body, timeout=REQUEST_TIMEOUT)
+        else:
+            r2 = requests.post(url, headers=_gh_headers(), json=body, timeout=REQUEST_TIMEOUT)
+        if r2.status_code in (201, 204):
+            logger.info(f"持仓状态已更新: {json.dumps(pos, ensure_ascii=False)}")
+            return True
+        logger.error(f"写持仓状态失败: HTTP {r2.status_code} {r2.text[:200]}")
+        return False
+    except Exception as e:
+        logger.error(f"写持仓状态异常: {e}")
+        return False
+
+
+def judge_zz_signal(deviation, pos):
+    """信号判定：空仓且偏离度 ≤ -7% → 买入；持仓且偏离度 ≥ 0% → 卖出；否则无信号。"""
+    if pos["状态"] == "持仓":
+        if deviation >= ZZ_SELL_THRESHOLD:
+            return "卖出"
+        return None
+    if deviation <= ZZ_BUY_THRESHOLD:
+        return "买入"
+    return None
+
+
+def review_pending_signal(pos, df_daily, logger):
+    """复核上一次的信号：用「信号日的真实收盘偏离度」判定信号真伪。
+
+    返回 (复核结果文本, pos 是否被改动)
+    """
+    if not pos.get("待确认") or not pos.get("信号日"):
+        return None, False
+
+    real_close, real_dev = zz_close_deviation_on_date(df_daily, pos["信号日"])
+    if real_dev is None:
+        logger.info(f"日线尚无 {pos['信号日']} 的数据（同日重复运行或数据未更新），保留待确认状态")
+        return None, False
+
+    kind, sig_day = pos["信号类型"], pos["信号日"]
+    if kind == "买入":
+        if real_dev <= ZZ_BUY_THRESHOLD:
+            pos["状态"] = "持仓"
+            pos["买入日"] = sig_day
+            pos["买入价"] = round(real_close, 2)
+            pos["买入偏离度"] = round(real_dev, 2)
+            text = (f"✅ 昨日({sig_day})买入信号复核通过：当日实际收盘偏离度 "
+                    f"{real_dev:+.2f}%（≤ {ZZ_BUY_THRESHOLD:.0f}%），已登记为持仓，"
+                    f"买入价按收盘 {real_close:.2f} 点")
+        else:
+            pos["状态"] = "空仓"
+            text = (f"⚠️ 昨日({sig_day})买入信号作废：盘中触发但收盘偏离度 "
+                    f"{real_dev:+.2f}%（未达 {ZZ_BUY_THRESHOLD:.0f}%），视为闪断，未建仓")
+    else:
+        if real_dev >= ZZ_SELL_THRESHOLD:
+            pos["状态"] = "空仓"
+            text = (f"✅ 昨日({sig_day})卖出信号复核通过：当日实际收盘偏离度 "
+                    f"{real_dev:+.2f}%（≥ {ZZ_SELL_THRESHOLD:.0f}%），已清仓，等下一次 ≤"
+                    f"{ZZ_BUY_THRESHOLD:.0f}%")
+            pos["买入日"] = pos["买入价"] = pos["买入偏离度"] = None
+        else:
+            pos["状态"] = "持仓"
+            text = (f"⚠️ 昨日({sig_day})卖出信号作废：盘中触发但收盘偏离度 "
+                    f"{real_dev:+.2f}%（未达 {ZZ_SELL_THRESHOLD:.0f}%），继续持有")
+
+    pos["待确认"] = False
+    pos["信号类型"] = None
+    pos["信号日"] = None
+    pos["信号日盘中偏离度"] = None
+    return text, True
 
 
 # ============================================================
@@ -298,16 +540,16 @@ def _calc_rating(pe_pct):
 # PushDeer 消息构造
 # ============================================================
 
-def build_message(etf_result, nasdaq_result, logger):
-    etf_date = _safe_get(etf_result, "analysis_date", "") if etf_result else ""
+def build_message(zz_result, nasdaq_result, pos, signal, review_text, etf_quote, logger):
+    zz_date = _safe_get(zz_result, "analysis_date", "") if zz_result else ""
     nasdaq_date = _safe_get(nasdaq_result, "analysis_date", "") if nasdaq_result else ""
-    title_date = etf_date or nasdaq_date or datetime.now(BEIJING_TZ).strftime("%Y-%m-%d")
+    title_date = zz_date or nasdaq_date or datetime.now(BEIJING_TZ).strftime("%Y-%m-%d")
 
     lines = []
-    lines.append(f"【Trae】定投偏离度 - {title_date}")
+    lines.append(f"【Trae】中证红利偏离度 - {title_date}")
     lines.append("")
 
-    lines.append(_build_etf_section(etf_result))
+    lines.append(_build_zz_section(zz_result, pos, signal, review_text, etf_quote))
     lines.append("---")
     lines.append(_build_nasdaq_section(nasdaq_result))
 
@@ -320,31 +562,77 @@ def _safe_get(d, key, default="N/A"):
     return d.get(key, default)
 
 
-def _build_etf_section(result):
+def _fmt_tx_ts(ts):
+    """20260916161448 → 16:14"""
+    if not ts or len(ts) < 12:
+        return "时间未知"
+    return f"{ts[8:10]}:{ts[10:12]}"
+
+
+def _build_zz_section(result, pos, signal, review_text, etf_quote):
     lines = []
-    lines.append("### 515450红利低波50ETF")
+    lines.append(f"### {ZZ_INDEX_NAME}")
+    lines.append("")
+    lines.append(f"> 策略：偏离度首次 ≤{ZZ_BUY_THRESHOLD:.0f}% 满仓买入 {ZZ_ETF_NAME}，"
+                 f"持有到偏离度首次 ≥{ZZ_SELL_THRESHOLD:.0f}% 全部卖出（不看持有时长）")
+    lines.append("")
+
+    if review_text:
+        lines.append(review_text)
+        lines.append("")
 
     if result is None:
-        lines.append("")
         lines.append("- 状态：数据获取失败")
-        lines.append("- 建议：持有不动")
         return "\n".join(lines)
 
-    price = result.get("current_price", "N/A")
-    ma_val = result.get("ma_value", "N/A")
-    dev = result.get("deviation", 0)
-    unit = result.get("price_unit", "元")
-    status, advice = result.get("status", ""), result.get("advice", "")
+    if result.get("holiday"):
+        lines.append(f"- 今日休市（腾讯行情无更新，最后一根为 {result.get('daily_last_date')}）")
+        lines.append("")
+        lines.append("**状态：休市，不判定信号**")
+        return "\n".join(lines)
+
+    price = result["current_price"]
+    dev = result["deviation"]
+    holding = pos["状态"] == "持仓"
+
+    lines.append(f"- 指数现价：{price}{ZZ_PRICE_UNIT}（腾讯 {_fmt_tx_ts(result.get('quote_ts'))}）")
+    lines.append(f"- 250日均线：{result['ma_value']}{ZZ_PRICE_UNIT}")
+    lines.append(f"- 偏离度：{dev:+.2f}%")
+
+    if holding and pos.get("买入价"):
+        cost = pos["买入价"]
+        lines.append(f"- 持仓：{pos['买入日']} 买入 @{cost}{ZZ_PRICE_UNIT}，"
+                     f"当前浮动 **{(price / cost - 1) * 100:+.2f}%**（按指数点位估算）")
 
     lines.append("")
-    lines.append(f"- 当前价格：{price}{unit}")
-    lines.append(f"- 250日均线：{ma_val}{unit}")
-    lines.append(f"- 偏离度：{dev:+.1f}%" if isinstance(dev, (int, float)) else f"- 偏离度：{dev}")
-    lines.append(f"- 状态：{status}")
-    lines.append(f"- 建议：{advice}")
-    lines.append("")
-    lines.append("> 偏离度≤-6%持有60天胜率100%收益6%，出现日期2022年10-11月、2023年12月-2024年1月、2024年9月，以及最近的 2026年6月底-7月初")
 
+    if signal == "买入":
+        lines.append("## 🔔 买入信号")
+        lines.append(f"偏离度 {dev:+.2f}% 首次 ≤ {ZZ_BUY_THRESHOLD:.0f}%")
+        lines.append(f"**今日尾盘（14:40~15:00）满仓买入 {ZZ_ETF_NAME}**")
+        lines.append("")
+        lines.append("> 明日会用真实收盘价复核；若尾盘拉回则该信号作废")
+    elif signal == "卖出":
+        lines.append("## 🔔 卖出信号")
+        lines.append(f"偏离度 {dev:+.2f}% 首次 ≥ {ZZ_SELL_THRESHOLD:.0f}%")
+        lines.append(f"**今日尾盘（14:40~15:00）全部卖出 {ZZ_ETF_NAME}**")
+        lines.append("")
+        lines.append("> 明日会用真实收盘价复核；若尾盘回落则该信号作废")
+    elif holding:
+        lines.append(f"**状态：持仓中，等卖出信号**（离卖点还差 "
+                     f"{ZZ_SELL_THRESHOLD - dev:.2f} 个百分点）")
+    else:
+        lines.append(f"**状态：空仓等信号**（离买点还需再跌 "
+                     f"{abs(ZZ_BUY_THRESHOLD - dev):.2f} 个百分点）")
+
+    if etf_quote:
+        lines.append("")
+        lines.append(f"- {ZZ_ETF_NAME} 现价：{etf_quote['price']:.3f}{ZZ_ETF_PRICE_UNIT}"
+                     f"（下单参考，腾讯 {_fmt_tx_ts(etf_quote.get('ts'))}）")
+
+    lines.append("")
+    lines.append("> 近10年回测（000922，买-7%/卖0%）：10笔 / 胜率90% / 每笔平均+8.02% / "
+                 "平均持有41个交易日 / 累计+114.98%")
     return "\n".join(lines)
 
 
@@ -456,12 +744,12 @@ def send_pushdeer(full_text, logger):
 # 状态文件写入
 # ============================================================
 
-def write_status_file(date_str, etf_success, nasdaq_success, push_success,
+def write_status_file(date_str, zz_success, nasdaq_success, push_success,
                       errors, summary, logger):
     status = {
-        "任务名称": "合并定投提醒（515450 ETF + 纳斯达克100指数 + PE/PB）",
+        "任务名称": "中证红利偏离度策略提醒（000922 信号 / 515080 实盘 + 纳斯达克100指数）",
         "执行日期": date_str,
-        "是否成功": etf_success and nasdaq_success and push_success,
+        "是否成功": zz_success and nasdaq_success and push_success,
         "摘要信息": summary,
         "错误信息": errors if errors else None,
         "时间戳": datetime.now(BEIJING_TZ).isoformat(),
@@ -505,6 +793,56 @@ def is_in_push_window(beijing_now, logger):
     return False
 
 
+def run_zz_strategy(pos, beijing_now, logger, errors):
+    """执行中证红利策略：取数 → 复核昨日信号 → 判定今日信号 → 落库。
+
+    返回 (成功标志, 日线df, 指标dict, 今日信号, 复核文本, 515080实时行情)
+    """
+    today_str = beijing_now.strftime("%Y-%m-%d")
+
+    df_zz, err = fetch_with_retry(fetch_zz_daily, ZZ_INDEX_CODE, ZZ_INDEX_NAME, logger)
+    if df_zz is None:
+        errors.append(f"{ZZ_INDEX_NAME}: {err}")
+        return False, None, None, None, None, None
+
+    quote = fetch_tx_quote(ZZ_INDEX_CODE, logger)
+    etf_quote = None
+    try:
+        etf_quote = fetch_tx_quote(ZZ_ETF_CODE, logger)
+    except Exception as e:
+        logger.warning(f"{ZZ_ETF_NAME} 实时行情获取失败（不影响信号判定）: {e}")
+
+    # 行情日期必须是今天，否则视为休市（避免用陈旧实时价误判信号）
+    if quote["day"] != beijing_now.strftime("%Y%m%d"):
+        logger.warning(f"腾讯行情日期 {quote['day']} != 今天 {beijing_now.strftime('%Y%m%d')}，"
+                       f"判定休市，不判定信号、不改持仓状态")
+        stub = {"analysis_date": today_str, "holiday": True,
+                "daily_last_date": str(df_zz["date"].iloc[-1].date()), "quote_ts": quote["ts"]}
+        return True, df_zz, stub, None, None, etf_quote
+
+    try:
+        zz_result = calc_zz_metrics(df_zz, quote, logger)
+    except Exception as e:
+        logger.error(f"{ZZ_INDEX_NAME} 指标计算失败: {e}")
+        errors.append(f"{ZZ_INDEX_NAME}: {e}")
+        return False, df_zz, None, None, None, etf_quote
+
+    # 1) 先复核上一次的信号（用信号日的真实收盘偏离度判定真伪）
+    review_text, _ = review_pending_signal(pos, df_zz, logger)
+
+    # 2) 再判定今天的信号
+    signal = judge_zz_signal(zz_result["deviation"], pos)
+    if signal:
+        pos["待确认"] = True
+        pos["信号类型"] = signal
+        pos["信号日"] = today_str
+        pos["信号日盘中偏离度"] = zz_result["deviation"]
+
+    # 3) 落库（持仓状态是策略的唯一真相，先写库再推送，避免状态与推送脱节）
+    write_position(pos, logger)
+    return True, df_zz, zz_result, signal, review_text, etf_quote
+
+
 # ============================================================
 # 主流程
 # ============================================================
@@ -526,32 +864,32 @@ def main():
         return 0
 
     errors = []
-    etf_result = None
+    zz_result = None
     nasdaq_result = None
-    etf_success = False
+    signal = None
+    review_text = None
+    etf_quote = None
+    zz_success = False
     nasdaq_success = False
     push_success = False
     skip_reason = None
 
     try:
-        # --- 获取 515450 ETF 数据 ---
-        logger.info("--- 获取 515450 ETF 数据 ---")
-        df_etf, err = fetch_with_retry(fetch_etf_data, ETF_CODE, ETF_NAME, logger)
-        if df_etf is not None:
-            try:
-                metrics = calc_metrics(df_etf, ETF_MA_DAYS, ETF_PRICE_UNIT, False, logger)
-                status, advice = judge_status(metrics["should_invest"], metrics["deviation"])
-                metrics["status"] = status
-                metrics["advice"] = advice
-                etf_result = metrics
-                etf_success = True
-                logger.info(f"{ETF_NAME} 分析完成: {status}")
-            except Exception as e:
-                logger.error(f"{ETF_NAME} 指标计算失败: {e}")
-                errors.append(f"{ETF_NAME}: {e}")
-        else:
-            logger.error(f"{ETF_NAME} 数据获取失败: {err}")
-            errors.append(f"{ETF_NAME}: {err}")
+        # --- 中证红利策略：读持仓 → 取数 → 复核昨日信号 → 判定今日信号 ---
+        logger.info("--- 中证红利策略（000922 信号 / 515080 实盘）---")
+        pos = read_position(logger)
+        try:
+            zz_success, _, zz_result, signal, review_text, etf_quote = \
+                run_zz_strategy(pos, beijing_now, logger, errors)
+            if signal:
+                logger.info(f"今日信号: {signal}")
+            elif review_text:
+                logger.info(f"信号复核: {review_text}")
+            else:
+                logger.info(f"今日无信号（状态={pos['状态']}）")
+        except Exception as e:
+            logger.error(f"{ZZ_INDEX_NAME} 策略执行失败: {e}", exc_info=True)
+            errors.append(f"{ZZ_INDEX_NAME}: {e}")
 
         # --- 获取纳斯达克100指数数据 ---
         logger.info("--- 获取纳斯达克100指数数据 ---")
@@ -577,19 +915,22 @@ def main():
             errors.append(f"{NASDAQ_NAME}: {err}")
 
         # --- 构建消息 ---
-        message = build_message(etf_result, nasdaq_result, logger)
+        message = build_message(zz_result, nasdaq_result, pos, signal, review_text, etf_quote, logger)
         logger.info("推送消息已构建")
         logger.debug(f"消息内容:\n{message}")
 
         # --- 写入日志备用渠道 ---
-        _write_log_backup(etf_result, nasdaq_result, logger)
+        _write_log_backup(zz_result, nasdaq_result, pos, logger)
 
         # --- 幂等保护：当日已成功推送过则跳过（防止多个调度源重复推送） ---
-        # 说明：数据源(fund_etf_hist_sina)返回最近收盘日数据，盘中无当日K线，
+        # 说明：数据源返回最近收盘日数据，盘中无当日K线，
         #       因此不校验"数据日期==当天"，只保证每天最多推送一次。
         if has_successful_push_today(date_str, logger):
             skip_reason = f"今日({date_str})已成功推送过，跳过重复推送（幂等保护）"
             logger.warning(skip_reason)
+        elif DRY_RUN:
+            skip_reason = "[DRY_RUN] 跳过真实推送"
+            logger.info(skip_reason)
         else:
             # --- PushDeer 推送 ---
             push_success, push_resp = send_pushdeer(message, logger)
@@ -603,9 +944,9 @@ def main():
         errors.append(f"主流程异常: {e}")
 
     if skip_reason:
-        # 跳过推送（数据未更新 或 当日已推送过）：记录状态文件，优雅退出不算失败
+        # 跳过推送（当日已推送过 或 DRY_RUN）：记录状态文件，优雅退出不算失败
         try:
-            write_status_file(date_str, etf_success, nasdaq_success,
+            write_status_file(date_str, zz_success, nasdaq_success,
                               push_success, errors, f"跳过推送: {skip_reason}", logger)
         except Exception as e:
             logger.error(f"状态文件写入失败: {e}")
@@ -616,27 +957,27 @@ def main():
 
     # --- 写入状态文件 ---
     summary_parts = []
-    summary_parts.append(f"ETF: {'成功' if etf_success else '失败'}")
+    summary_parts.append(f"中证红利: {'成功' if zz_success else '失败'}")
     summary_parts.append(f"纳斯达克: {'成功' if nasdaq_success else '失败'}")
     summary_parts.append(f"推送: {'成功' if push_success else '失败'}")
     summary = " | ".join(summary_parts)
 
     try:
-        write_status_file(date_str, etf_success, nasdaq_success,
+        write_status_file(date_str, zz_success, nasdaq_success,
                          push_success, errors, summary, logger)
     except Exception as e:
         logger.error(f"状态文件写入失败: {e}")
 
     logger.info("=" * 50)
-    final_status = "成功" if (etf_success and nasdaq_success and push_success) else "部分失败"
+    final_status = "成功" if (zz_success and nasdaq_success and push_success) else "部分失败"
     logger.info(f"脚本执行完成 - {final_status}")
     logger.info(f"摘要: {summary}")
     logger.info("=" * 50)
 
-    return 0 if (etf_success and nasdaq_success and push_success) else 1
+    return 0 if (zz_success and nasdaq_success and push_success) else 1
 
 
-def _write_log_backup(etf_result, nasdaq_result, logger):
+def _write_log_backup(zz_result, nasdaq_result, pos, logger):
     try:
         log_file = os.path.join(LOGS_DIR, "combined_notifications.log")
         with open(log_file, "a", encoding="utf-8") as f:
@@ -644,15 +985,20 @@ def _write_log_backup(etf_result, nasdaq_result, logger):
             f.write(f"日志备用渠道 - {datetime.now(BEIJING_TZ).isoformat()}\n")
             f.write("=" * 60 + "\n")
 
-            if etf_result:
-                f.write(f"[515450ETF] 日期={_safe_get(etf_result, 'analysis_date')}, ")
-                f.write(f"价格={_safe_get(etf_result, 'current_price')}{ETF_PRICE_UNIT}, ")
-                f.write(f"均线={_safe_get(etf_result, 'ma_value')}{ETF_PRICE_UNIT}, ")
-                f.write(f"偏离度={_safe_get(etf_result, 'deviation')}%, ")
-                f.write(f"状态={_safe_get(etf_result, 'status')}, ")
-                f.write(f"建议={_safe_get(etf_result, 'advice')}\n")
+            f.write(f"[持仓状态] {json.dumps(pos, ensure_ascii=False)}\n")
+
+            if zz_result:
+                if zz_result.get("holiday"):
+                    f.write(f"[中证红利] 今日休市，最后一根={_safe_get(zz_result, 'daily_last_date')}\n")
+                else:
+                    f.write(f"[中证红利] 日期={_safe_get(zz_result, 'analysis_date')}, ")
+                    f.write(f"现价={_safe_get(zz_result, 'current_price')}{ZZ_PRICE_UNIT}, ")
+                    f.write(f"MA250={_safe_get(zz_result, 'ma_value')}{ZZ_PRICE_UNIT}, ")
+                    f.write(f"偏离度={_safe_get(zz_result, 'deviation')}%, ")
+                    f.write(f"腾讯时间={_safe_get(zz_result, 'quote_ts')}, ")
+                    f.write(f"日线最后一根={_safe_get(zz_result, 'daily_last_date')}\n")
             else:
-                f.write("[515450ETF] 数据获取失败\n")
+                f.write("[中证红利] 数据获取失败\n")
 
             if nasdaq_result:
                 f.write(f"[纳斯达克100] 日期={_safe_get(nasdaq_result, 'analysis_date')}, ")
