@@ -2,7 +2,7 @@ name: 每日定投偏离度
 
 on:
   # ⚠️ cron-job.org 是调度源：每天 14:40（北京时间）POST 到 workflow_dispatch API
-  # 注意：cron-job.org 上若残留上午 ~10:30 的旧任务需删除；脚本内已有 14:00 时间窗兜底拦截
+  # 注意：cron-job.org 上若残留旧任务（历史触发时间漂移在 13:18~14:27 之间），已用 14:35 时间窗兜底拦截
   # GitHub Actions schedule cron 因经常延迟数小时至十小时以上而废弃
   # 本地 Windows Task 已废弃（依赖本地电脑开机，不稳定）
   workflow_dispatch:
@@ -19,19 +19,19 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      # 推送时间窗检查（北京时间）：仅 14:00 之后才执行脚本与推送。
-      # 拦截 cron-job.org 上午 ~10:30 的旧调度任务：旧任务触发时，
+      # 推送时间窗检查（北京时间）：仅 14:35 之后才执行脚本与推送（正常任务 14:40 触发）。
+      # 拦截 cron-job.org 上的旧调度任务（历史触发时间漂移在 13:18~14:27 之间）：旧任务触发时，
       # 本步骤输出 ok=false，后续"运行脚本/提交日志"步骤全部跳过，workflow 空转。
-      - name: 推送时间窗检查（北京时间 14:00 前不执行）
+      - name: 推送时间窗检查（北京时间 14:35 前不执行）
         id: window
         run: |
-          H=$(TZ=Asia/Shanghai date +%H)
-          if [ "$H" -ge 14 ]; then
+          H=$(TZ=Asia/Shanghai date +%H%M)
+          if [ "$H" -ge 1435 ]; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
             echo "当前北京时间 $(TZ=Asia/Shanghai date +%H:%M)，在推送时间窗内"
           else
             echo "ok=false" >> "$GITHUB_OUTPUT"
-            echo "当前北京时间 $(TZ=Asia/Shanghai date +%H:%M)，早于 14:00，跳过本次执行（拦截上午旧任务）"
+            echo "当前北京时间 $(TZ=Asia/Shanghai date +%H:%M)，早于 14:35，跳过本次执行（拦截窗口外旧任务）"
           fi
 
       - name: 设置 Python
