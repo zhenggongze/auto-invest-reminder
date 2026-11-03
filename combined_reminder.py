@@ -931,6 +931,11 @@ def main():
         errors.append(f"主流程异常: {e}")
 
     if skip_reason:
+        if "已成功推送过" in skip_reason:
+            # 幂等跳过：不覆盖状态文件，保留当日“已成功推送”记录，
+            # 否则后续任何触发都会读到 False 而重复推送（2026-11-03 踩坑）。
+            logger.info(f"脚本执行完成 - 跳过推送（原因: {skip_reason}），状态文件保留不动")
+            return 0
         # 跳过推送（当日已推送过 或 DRY_RUN）：记录状态文件，优雅退出不算失败
         try:
             write_status_file(date_str, zz_success, nasdaq_success,
