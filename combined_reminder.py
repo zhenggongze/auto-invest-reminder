@@ -142,7 +142,9 @@ def fetch_with_retry(fetch_func, code, name, logger):
 def fetch_zz_daily(code):
     """000922 日线（腾讯源）。云端实测：东财断连、新浪停在 2019，只有腾讯可用。"""
     import akshare as ak
-    df = ak.stock_zh_index_daily_tx(symbol=code)
+    # akshare 1.20.44 更名 stock_zh_index_daily_tx -> index_zh_daily_tx，新旧版本兼容取用
+    fn = getattr(ak, "index_zh_daily_tx", None) or ak.stock_zh_index_daily_tx
+    df = fn(symbol=code)
     df["date"] = pd.to_datetime(df["date"])
     return df.sort_values("date").reset_index(drop=True)
 
@@ -180,7 +182,9 @@ def fetch_tx_quote(code, logger=None):
 
 def fetch_nasdaq_data(code):
     import akshare as ak
-    df = ak.index_us_stock_sina(symbol=code)
+    # akshare 1.20.45 更名 index_us_stock_sina -> index_us_daily_sina，新旧版本兼容取用
+    fn = getattr(ak, "index_us_daily_sina", None) or ak.index_us_stock_sina
+    df = fn(symbol=code)
     return df
 
 
