@@ -418,7 +418,10 @@ def review_pending_signal(pos, df_daily, logger):
 def judge_status(should_invest, deviation):
     abs_dev = abs(deviation)
     if should_invest:
-        if abs_dev > 2:
+        if abs_dev > 10:
+            status = "偏离度<-10%，达到梭哈档（历史级买点）"
+            advice = "4000元/天定投 + 梭哈剩余资金"
+        elif abs_dev > 2:
             status = "价格显著低于均线，定投良机"
             advice = "定投买入"
         elif abs_dev > 1:
